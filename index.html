@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>노션 → 엑셀 자동화</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0f1117; color: #f8fafc; font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif; min-height: 100vh; padding: 28px 16px; }
+  .inner { max-width: 820px; margin: 0 auto; }
+  .badge { font-size: 11px; color: #6366f1; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px; }
+  h1 { font-size: 24px; font-weight: 800; margin-bottom: 6px; }
+  .card { background: #0d1117; border: 1px solid #1e293b; border-radius: 14px; padding: 22px; margin-bottom: 16px; }
+  .card-label { font-size: 11px; font-weight: 700; color: #6366f1; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 10px; display: block; }
+  .drop-zone { border: 2px dashed #1e293b; border-radius: 14px; padding: 28px 20px; cursor: pointer; text-align: center; background: #0d1117; transition: all 0.2s; margin-bottom: 10px; }
+  .drop-zone:hover, .drop-zone.drag { border-color: #6366f1; background: #1e1b4b; }
+  .drop-zone.done { border-color: #22c55e; background: #052e16; }
+  .drop-icon { font-size: 28px; margin-bottom: 6px; }
+  .drop-title { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+  .drop-desc { color: #64748b; font-size: 13px; }
+  .msg { font-size: 13px; color: #94a3b8; margin-top: 6px; min-height: 20px; }
+  .btn { padding: 13px 20px; border-radius: 10px; border: none; font-weight: 700; font-size: 14px; cursor: pointer; background: linear-gradient(135deg,#6366f1,#818cf8); color: #fff; width: 100%; font-family: inherit; }
+  .btn:disabled { background: #1e293b; color: #475569; cursor: not-allowed; }
+  .btn-back { background: #1e293b !important; color: #94a3b8 !important; flex: 1; }
+  .btn-go { flex: 2; }
+  .btn-row { display: flex; gap: 10px; }
+  .filter-section { margin-bottom: 16px; }
+  .filter-label { font-size: 12px; color: #64748b; margin-bottom: 8px; font-weight: 600; }
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pill { padding: 5px 13px; border-radius: 20px; border: 1px solid #1e293b; background: transparent; color: #64748b; font-size: 12px; cursor: pointer; white-space: nowrap; font-family: inherit; transition: all 0.15s; }
+  .pill.active { border-color: #6366f1; background: #1e1b4b; color: #818cf8; }
+  .preview-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .preview-count { font-size: 13px; font-weight: 700; }
+  .preview-count.ok { color: #22c55e; }
+  .preview-count.zero { color: #ef4444; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { padding: 7px 10px; background: #1e293b; color: #818cf8; text-align: left; white-space: nowrap; }
+  td { padding: 7px 10px; color: #94a3b8; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid #1e293b; }
+  .more { margin-top: 8px; font-size: 12px; color: #475569; }
+  .done-wrap { text-align: center; padding: 48px 24px; }
+  .done-emoji { font-size: 56px; margin-bottom: 12px; }
+  .done-title { font-size: 22px; font-weight: 800; margin-bottom: 8px; }
+  .done-sub { color: #94a3b8; margin-bottom: 6px; }
+  .done-sub2 { color: #64748b; font-size: 13px; margin-bottom: 28px; }
+  .highlight { color: #22c55e; font-weight: 700; }
+  .steps { display: flex; justify-content: center; align-items: center; margin-bottom: 24px; }
+  .step-item { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+  .step-circle { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; background: #1e293b; color: #475569; border: 2px solid transparent; transition: all 0.3s; }
+  .step-circle.active { background: #6366f1; color: #fff; border-color: #818cf8; }
+  .step-circle.done { background: #6366f1; color: #fff; border-color: transparent; }
+  .step-label { font-size: 11px; color: #475569; white-space: nowrap; }
+  .step-label.active { color: #818cf8; }
+  .step-line { width: 48px; height: 2px; background: #1e293b; margin: 0 6px; margin-bottom: 18px; transition: background 0.3s; }
+  .step-line.done { background: #6366f1; }
+  #step1, #step2, #step3 { display: none; }
+</style>
+</head>
+<body>
+<div class="inner">
+  <div style="text-align:center;margin-bottom:28px">
+    <div class="badge">NOTION → EXCEL</div>
+    <h1>노션 내보내기 → 엑셀 자동화</h1>
+    <p style="color:#64748b;font-size:13px;margin-top:6px">ZIP 파일 업로드 → 필터링 → 새 엑셀 파일 생성</p>
+  </div>
+
+  <div class="steps">
+    <div class="step-item"><div class="step-circle" id="sc1">1</div><div class="step-label" id="sl1">파일 업로드</div></div>
+    <div class="step-line" id="line1"></div>
+    <div class="step-item"><div class="step-circle" id="sc2">2</div><div class="step-label" id="sl2">필터 &amp; 확인</div></div>
+    <div class="step-line" id="line2"></div>
+    <div class="step-item"><div class="step-circle" id="sc3">3</div><div class="step-label" id="sl3">완료</div></div>
+  </div>
+
+  <div id="step1">
+    <div class="card">
+      <span class="card-label">노션 내보내기 파일 (ZIP 또는 CSV)</span>
+      <div class="drop-zone" id="notion-drop" onclick="document.getElementById('notion-input').click()">
+        <input type="file" id="notion-input" accept=".zip,.csv" style="display:none">
+        <div class="drop-icon" id="notion-icon">📦</div>
+        <div class="drop-title" id="notion-title">ZIP 또는 CSV 파일</div>
+        <div class="drop-desc" id="notion-desc">노션 내보내기 ZIP을 그대로 드래그하거나 클릭</div>
+      </div>
+      <div class="msg" id="load-msg"></div>
+    </div>
+    <button class="btn" id="btn-next1" disabled onclick="goStep2()">다음 단계 →</button>
+  </div>
+
+  <div id="step2">
+    <div class="card">
+      <span class="card-label">필터링</span>
+      <div class="filter-section">
+        <div class="filter-label">Consultant</div>
+        <div class="pills" id="pills-consultant"></div>
+      </div>
+      <div class="filter-section">
+        <div class="filter-label">Month</div>
+        <div class="pills" id="pills-month"></div>
+      </div>
+      <div class="filter-section">
+        <div class="filter-label">Week</div>
+        <div class="pills" id="pills-week"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="preview-header">
+        <span class="card-label" style="margin-bottom:0">미리보기</span>
+        <span class="preview-count" id="preview-count">0개 선택</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table id="preview-table"><thead></thead><tbody></tbody></table>
+      </div>
+      <div class="more" id="preview-more"></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-back" onclick="goStep1()">← 이전</button>
+      <button class="btn btn-go" id="btn-generate" onclick="generateExcel()">엑셀 다운로드</button>
+    </div>
+  </div>
+
+  <div id="step3">
+    <div class="done-wrap">
+      <div class="done-emoji">🎉</div>
+      <div class="done-title">완료!</div>
+      <div class="done-sub"><span class="highlight" id="done-count"></span>이 엑셀로 저장되었습니다</div>
+      <div class="done-sub2">파일이 자동으로 다운로드됩니다</div>
+      <button class="btn" style="width:auto;padding:13px 32px" onclick="reset()">처음부터 다시 하기</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// 열 구조 (0-based)
+// B=1,C=2,D=3,E=4,F=5,G=6
+// WK1: H=7,I=8,J=9,K=10,L=11, M=12(SUM)
+// WK2: N=13,O=14,P=15,Q=16,R=17, S=18(SUM)
+// WK3: T=19,U=20,V=21,W=22,X=23, Y=24(SUM)
+// WK4: Z=25,AA=26,AB=27,AC=28,AD=29, AE=30(SUM)
+// WK5: AF=31,AG=32,AH=33,AI=34,AJ=35, AK=36(SUM)
+const WK_COL_START_0 = [7, 13, 19, 25, 31]; // 0-based, 각 주차 월요일 열
+
+function cleanUrl(val) {
+  if (!val || typeof val !== "string") return val || "";
+  return val.replace(/\s*\(https?:\/\/[^)]*\)/g, "").trim();
+}
+
+function parseKoreanDate(str) {
+  if (!str) return null;
+  str = str.trim();
+  const m = str.match(/(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/);
+  if (m) return new Date(+m[1], +m[2]-1, +m[3]);
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    const p = str.slice(0,10).split("-");
+    return new Date(+p[0], +p[1]-1, +p[2]);
+  }
+  return null;
+}
+
+// 해당 월의 주차별 날짜 목록 (월요일 기준 그룹)
+function getMonthWeeks(year, month) {
+  const weeks = [];
+  let d = new Date(year, month-1, 1);
+  let weekDays = [];
+  while (d.getMonth() === month-1) {
+    const dow = d.getDay();
+    if (dow === 1 && weekDays.length > 0) { weeks.push(weekDays); weekDays = []; }
+    if (dow >= 1 && dow <= 5) weekDays.push(new Date(d));
+    d.setDate(d.getDate()+1);
+  }
+  if (weekDays.length > 0) weeks.push(weekDays);
+  return weeks;
+}
+
+function getWeekIndex(date, monthWeeks) {
+  const t = date.getTime();
+  for (let i = 0; i < monthWeeks.length; i++) {
+    for (const d of monthWeeks[i]) {
+      if (d.getTime() === t) return i;
+    }
+  }
+  return -1;
+}
+
+function getDayIndex(date) {
+  const dow = date.getDay(); // 1=월...5=금
+  if (dow < 1 || dow > 5) return -1;
+  return dow - 1;
+}
+
+function distributeHours(totalHours, startDayIdx) {
+  const days = [0,0,0,0,0];
+  let remaining = totalHours;
+  let di = startDayIdx;
+  while (remaining > 0 && di < 5) {
+    const add = Math.min(8, remaining);
+    days[di] += add;
+    remaining -= add;
+    di++;
+  }
+  return days;
+}
+
+let allRows = [];
+let filterConsultant = "전체", filterMonth = "전체", filterWeek = "전체";
+let filteredRows = [];
+
+function parseCsvText(text, filename) {
+  const result = Papa.parse(text, { header: true, skipEmptyLines: true });
+  const headers = result.meta.fields || [];
+  const jobCol = headers.find(h => h.trim() === "Job (페이지)") || headers.find(h => h.trim() === "Job") || "Job";
+
+  allRows = result.data.map(row => {
+    const cleaned = {};
+    headers.forEach(h => { cleaned[h] = cleanUrl(row[h]); });
+    cleaned["_jobCol"] = jobCol;
+    const dateObj = parseKoreanDate(row["Day"] || "");
+    cleaned["_date"] = dateObj;
+    cleaned["_dateStr"] = dateObj ? dateObj.toISOString().slice(0,10) : "";
+    cleaned["_month"] = cleanUrl(row["Month"] || "");
+    cleaned["_week"] = (row["Week"] || "").trim();
+    cleaned["_hours"] = parseFloat(row["시간"] || "0") || 0;
+    if (cleaned["Type"] === "J1 \u2013 강의") cleaned["Type"] = "J1 - 강의";
+    return cleaned;
+  });
+
+  const fname = filename.split("/").pop().split("\\").pop();
+  const months = [...new Set(allRows.map(r => r._month).filter(Boolean))].sort();
+  const weeks  = [...new Set(allRows.map(r => r._week).filter(Boolean))];
+  document.getElementById("load-msg").textContent =
+    `✅ ${fname} · ${allRows.length}개 행 · Month ${months.length}개 · Week: ${weeks.join(", ")}`;
+  document.getElementById("notion-icon").textContent = "✅";
+  document.getElementById("notion-title").style.color = "#22c55e";
+  document.getElementById("notion-title").textContent = fname;
+  document.getElementById("notion-desc").textContent = `${allRows.length}개 행 · 클릭하여 변경`;
+  document.getElementById("notion-drop").classList.add("done");
+  document.getElementById("btn-next1").disabled = false;
+}
+
+async function processFile(file) {
+  document.getElementById("load-msg").textContent = "처리 중...";
+  try {
+    if (file.name.endsWith(".zip")) {
+      const zip = await JSZip.loadAsync(file);
+      const csvFiles = Object.values(zip.files).filter(
+        f => !f.dir && f.name.endsWith(".csv") && !f.name.includes("__MACOSX")
+      );
+      if (!csvFiles.length) { document.getElementById("load-msg").textContent = "❌ ZIP 안에 CSV가 없습니다."; return; }
+      csvFiles.sort((a,b) => (b._data?.uncompressedSize||0)-(a._data?.uncompressedSize||0));
+      parseCsvText(await csvFiles[0].async("text"), csvFiles[0].name);
+    } else if (file.name.endsWith(".csv")) {
+      parseCsvText(await file.text(), file.name);
+    } else {
+      document.getElementById("load-msg").textContent = "❌ ZIP 또는 CSV만 지원합니다.";
+    }
+  } catch(e) { document.getElementById("load-msg").textContent = "❌ 오류: " + e.message; }
+}
+
+const nd = document.getElementById("notion-drop");
+nd.addEventListener("dragover", e => { e.preventDefault(); nd.classList.add("drag"); });
+nd.addEventListener("dragleave", () => nd.classList.remove("drag"));
+nd.addEventListener("drop", e => { e.preventDefault(); nd.classList.remove("drag"); if(e.dataTransfer.files[0]) processFile(e.dataTransfer.files[0]); });
+document.getElementById("notion-input").addEventListener("change", e => { if(e.target.files[0]) processFile(e.target.files[0]); });
+
+function renderPills(id, opts, cur, setter) {
+  const el = document.getElementById(id);
+  el.innerHTML = "";
+  opts.forEach(opt => {
+    const b = document.createElement("button");
+    b.className = "pill" + (opt===cur?" active":"");
+    b.textContent = opt||"(없음)";
+    b.onclick = () => { setter(opt); renderAll(); };
+    el.appendChild(b);
+  });
+}
+
+function getFiltered() {
+  return allRows.filter(row => {
+    if (filterConsultant !== "전체" && (row["Consultant"]||"") !== filterConsultant) return false;
+    if (filterMonth !== "전체" && row._month !== filterMonth) return false;
+    if (filterWeek !== "전체" && row._week !== filterWeek) return false;
+    return true;
+  });
+}
+
+function renderAll() {
+  const consultants = ["전체", ...new Set(allRows.map(r => r["Consultant"]||"").filter(Boolean))].sort();
+  const months = ["전체", ...new Set(allRows.map(r => r._month).filter(Boolean))].sort();
+  const weeks  = ["전체", ...new Set(allRows.map(r => r._week).filter(Boolean))].sort((a,b)=>parseInt(a.slice(2))-parseInt(b.slice(2)));
+
+  renderPills("pills-consultant", consultants, filterConsultant, v => filterConsultant=v);
+  renderPills("pills-month", months, filterMonth, v => filterMonth=v);
+  renderPills("pills-week", weeks, filterWeek, v => filterWeek=v);
+
+  filteredRows = getFiltered();
+  const countEl = document.getElementById("preview-count");
+  countEl.textContent = `${filteredRows.length}개 선택 / 전체 ${allRows.length}개`;
+  countEl.className = "preview-count " + (filteredRows.length>0?"ok":"zero");
+
+  const table = document.getElementById("preview-table");
+  table.querySelector("thead").innerHTML = "<tr>"+["날짜","BD/Manager","BU","Type","Job","Consultant","시간","주차"].map(c=>`<th>${c}</th>`).join("")+"</tr>";
+  table.querySelector("tbody").innerHTML = filteredRows.slice(0,8).map(row => {
+    const jc = row["_jobCol"]||"Job (페이지)";
+    return "<tr>"+[
+      row._dateStr||"-", row["BD/Manager"]||"-", row["BU"]||"-",
+      row["Type"]||"-", (row[jc]||"-").slice(0,30),
+      row["Consultant"]||"-", row._hours||"-", row._week||"-",
+    ].map(v=>`<td title="${v}">${v}</td>`).join("")+"</tr>";
+  }).join("");
+
+  document.getElementById("preview-more").textContent = filteredRows.length>8 ? `...외 ${filteredRows.length-8}개 행` : "";
+  document.getElementById("btn-generate").textContent = `엑셀 다운로드 (${filteredRows.length}개 행)`;
+  document.getElementById("btn-generate").disabled = filteredRows.length===0;
+}
+
+function setStep(n) {
+  [1,2,3].forEach(i => {
+    document.getElementById("step"+i).style.display = i===n?"block":"none";
+    const sc=document.getElementById("sc"+i), sl=document.getElementById("sl"+i);
+    if(i<n){sc.className="step-circle done";sc.textContent="✓";sl.className="step-label";}
+    else if(i===n){sc.className="step-circle active";sl.className="step-label active";}
+    else{sc.className="step-circle";sc.textContent=i;sl.className="step-label";}
+    if(i<3) document.getElementById("line"+i).className="step-line"+(i<n?" done":"");
+  });
+}
+
+function goStep1() { setStep(1); }
+function goStep2() { renderAll(); setStep(2); }
+
+function generateExcel() {
+  // Month에서 연/월 추출
+  const firstMonth = filteredRows[0]?._month || "";
+  const mMatch = firstMonth.match(/FY(\d{2})\s*M(\d{2})/);
+  let year = 2026, month = 6;
+  if (mMatch) { year = 2000 + parseInt(mMatch[1]); month = parseInt(mMatch[2]); }
+
+  const monthWeeks = getMonthWeeks(year, month);
+
+  // 그룹화
+  const jobColName = filteredRows[0]?.["_jobCol"] || "Job (페이지)";
+  const groupMap = new Map();
+
+  filteredRows.forEach(row => {
+    const dateObj = row._date;
+    if (!dateObj) return;
+    const wkIdx = getWeekIndex(dateObj, monthWeeks);
+    if (wkIdx < 0) return;
+    const dayIdx = getDayIndex(dateObj);
+    if (dayIdx < 0) return;
+
+    const key = [row._dateStr, row["BD/Manager"]||"", row["BU"]||"", row["Type"]||"", row[jobColName]||"", row["Consultant"]||""].join("||");
+    if (!groupMap.has(key)) {
+      groupMap.set(key, {
+        startDate: row._dateStr,
+        bdManager: row["BD/Manager"]||"",
+        bu: row["BU"]||"",
+        type: row["Type"]||"",
+        job: row[jobColName]||"",
+        consultant: row["Consultant"]||"",
+        wkDays: [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]],
+      });
+    }
+    const g = groupMap.get(key);
+    const dist = distributeHours(row._hours, dayIdx);
+    for (let di=0; di<5; di++) g.wkDays[wkIdx][di] += dist[di];
+  });
+
+  const grouped = [...groupMap.values()];
+
+  // 새 워크북 생성
+  const wb = XLSX.utils.book_new();
+  const ws = {};
+
+  // 선택한 주차 인덱스 (0=WK1 ... 4=WK5), 전체면 모든 주차
+  const selectedWkIdx = filterWeek !== "전체"
+    ? [parseInt(filterWeek.slice(2)) - 1]
+    : [0,1,2,3,4].filter(i => i < monthWeeks.length);
+
+  // 헤더행 (row 0, 0-based) - A열부터 (col 0)
+  const BASE_HEADERS = ["Start Date","BD/Manager","BU","Type","Job","Consultant"];
+  const WK_HEADERS = selectedWkIdx.flatMap(wki => ["월","화","수","목","금"]);
+  const HEADERS = [...BASE_HEADERS, ...WK_HEADERS];
+
+  HEADERS.forEach((h, ci) => {
+    const addr = XLSX.utils.encode_cell({ r: 0, c: ci });
+    ws[addr] = { v: h, t: "s" };
+  });
+
+  // 데이터 행 (row 1부터)
+  grouped.forEach((g, i) => {
+    const r = i + 1;
+    const row = [];
+    row.push(g.startDate, g.bdManager, g.bu, g.type, g.job, g.consultant);
+    selectedWkIdx.forEach(wki => {
+      row.push(...g.wkDays[wki]); // 월화수목금
+    });
+    row.forEach((v, ci) => {
+      const addr = XLSX.utils.encode_cell({ r, c: ci });
+      const isNum = ci >= 6;
+      ws[addr] = isNum ? { v, t: "n" } : { v, t: "s" };
+    });
+  });
+
+  const totalCols = 6 + selectedWkIdx.length * 5;
+  ws["!ref"] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:grouped.length,c:totalCols-1} });
+
+  ws["!cols"] = [
+    {wch:12},  // Start Date
+    {wch:10},  // BD/Manager
+    {wch:6},   // BU
+    {wch:30},  // Type
+    {wch:40},  // Job
+    {wch:10},  // Consultant
+    ...Array(selectedWkIdx.length * 5).fill({wch:5}),
+  ];
+
+  const sheetName = `${month}월`;
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+
+  const filename = `PS_Tracker_${year}년_${month}월_${filterWeek !== "전체" ? filterWeek+"_" : ""}${filterConsultant !== "전체" ? filterConsultant+"_" : ""}추출.xlsx`;
+  XLSX.writeFile(wb, filename);
+  document.getElementById("done-count").textContent = `${grouped.length}개 행`;
+  setStep(3);
+}
+
+function reset() {
+  allRows=[]; filteredRows=[];
+  filterConsultant="전체"; filterMonth="전체"; filterWeek="전체";
+  document.getElementById("notion-icon").textContent="📦";
+  document.getElementById("notion-title").style.color="";
+  document.getElementById("notion-title").textContent="ZIP 또는 CSV 파일";
+  document.getElementById("notion-desc").textContent="노션 내보내기 ZIP을 그대로 드래그하거나 클릭";
+  document.getElementById("notion-drop").classList.remove("done");
+  document.getElementById("load-msg").textContent="";
+  document.getElementById("btn-next1").disabled=true;
+  document.getElementById("notion-input").value="";
+  setStep(1);
+}
+
+setStep(1);
+</script>
+</body>
+</html>
