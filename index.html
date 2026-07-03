@@ -149,6 +149,7 @@ function cleanUrl(val) {
 function parseKoreanDate(str) {
   if (!str) return null;
   str = str.trim();
+  // 날짜 범위 "2026년 6월 16일 → 2026년 6월 19일" → 시작 날짜만 사용
   const m = str.match(/(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/);
   if (m) return new Date(+m[1], +m[2]-1, +m[3]);
   if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
@@ -337,45 +338,69 @@ function generateExcel() {
 
   const monthWeeks = getMonthWeeks(year, month);
 
-  // 그룹화
-  const jobColName = filteredRows[0]?.["_jobCol"] || "Job (페이지)";
-  const groupMap = new Map();
-
-  filteredRows.forEach(row => {
-    const dateObj = row._date;
-    if (!dateObj) return;
-    const wkIdx = getWeekIndex(dateObj, monthWeeks);
-    if (wkIdx < 0) return;
-    const dayIdx = getDayIndex(dateObj);
-    if (dayIdx < 0) return;
-
-    const key = [row._dateStr, row["BD/Manager"]||"", row["BU"]||"", row["Type"]||"", row[jobColName]||"", row["Consultant"]||""].join("||");
-    if (!groupMap.has(key)) {
-      groupMap.set(key, {
-        startDate: row._dateStr,
-        bdManager: row["BD/Manager"]||"",
-        bu: row["BU"]||"",
-        type: row["Type"]||"",
-        job: row[jobColName]||"",
-        consultant: row["Consultant"]||"",
-        wkDays: [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]],
-      });
-    }
-    const g = groupMap.get(key);
-    const dist = distributeHours(row._hours, dayIdx);
-    for (let di=0; di<5; di++) g.wkDays[wkIdx][di] += dist[di];
-  });
-
-  const grouped = [...groupMap.values()];
-
-  // 새 워크북 생성
-  const wb = XLSX.utils.book_new();
-  const ws = {};
-
   // 선택한 주차 인덱스 (0=WK1 ... 4=WK5), 전체면 모든 주차
   const selectedWkIdx = filterWeek !== "전체"
     ? [parseInt(filterWeek.slice(2)) - 1]
     : [0,1,2,3,4].filter(i => i < monthWeeks.length);
+
+  // 날짜 범위 행을 개별 날짜로 확장
+  const expandedRows = [];
+  filteredRows.forEach(row => {
+    const dayStr = (row["Day"] || "").trim();
+    const rangeMatch = dayStr.match(/(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일\s*→\s*(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/);
+    if (rangeMatch) {
+      const startD = new Date(+rangeMatch[1], +rangeMatch[2]-1, +rangeMatch[3]);
+      const endD   = new Date(+rangeMatch[4], +rangeMatch[5]-1, +rangeMatch[6]);
+      const weekdays = [];
+      const d = new Date(startD);
+      while (d <= endD) {
+        if (d.getDay() >= 1 && d.getDay() <= 5) weekdays.push(new Date(d));
+        d.setDate(d.getDate()+1);
+      }
+      const hoursPerDay = weekdays.length > 0 ? (row._hours / weekdays.length) : 0;
+      weekdays.forEach(wd => {
+        expandedRows.push({ ...row, _date: wd, _dateStr: wd.toISOString().slice(0,10), _hours: hoursPerDay });
+      });
+    } else {
+      expandedRows.push(row);
+    }
+  });
+
+  // 노션의 Week 값을 그대로 사용해서 주차 인덱스 매핑
+  // WK1→0, WK2→1, WK3→2, WK4→3, WK5→4
+  const outputRows = [];
+  expandedRows.forEach(row => {
+    const notionWeek = row._week || ""; // WK1~WK5
+    const wkIdx = parseInt(notionWeek.slice(2)) - 1; // 0-based
+    if (isNaN(wkIdx) || wkIdx < 0) return;
+
+    // 선택한 주차 필터
+    if (!selectedWkIdx.includes(wkIdx)) return;
+
+    const dayIdx = getDayIndex(row._date);
+    if (dayIdx < 0) return; // 주말 제외
+
+    const jobColName = row["_jobCol"] || "Job (페이지)";
+    const wkDays = [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]];
+    const dist = distributeHours(row._hours, dayIdx);
+    for (let di=0; di<5; di++) wkDays[wkIdx][di] += dist[di];
+
+    outputRows.push({
+      startDate: row._dateStr,
+      bdManager: row["BD/Manager"]||"",
+      bu: row["BU"]||"",
+      type: row["Type"]||"",
+      job: row[jobColName]||"",
+      consultant: row["Consultant"]||"",
+      wkDays,
+    });
+  });
+
+  const grouped = outputRows;
+
+  // 새 워크북 생성
+  const wb = XLSX.utils.book_new();
+  const ws = {};
 
   // 헤더행 (row 0, 0-based) - A열부터 (col 0)
   const BASE_HEADERS = ["Start Date","BD/Manager","BU","Type","Job","Consultant"];
