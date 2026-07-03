@@ -222,9 +222,10 @@ function parseCsvText(text, filename) {
     cleaned["_month"] = cleanUrl(row["Month"] || "");
     cleaned["_week"] = (row["Week"] || "").trim();
     cleaned["_hours"] = parseFloat(row["시간"] || "0") || 0;
+    if (cleaned["강의 상태"] === "일정 취소") return null;
     if (cleaned["Type"] === "J1 \u2013 강의") cleaned["Type"] = "J1 - 강의";
     return cleaned;
-  });
+  }).filter(Boolean);
 
   const fname = filename.split("/").pop().split("\\").pop();
   const months = [...new Set(allRows.map(r => r._month).filter(Boolean))].sort();
@@ -285,67 +286,10 @@ function getFiltered() {
   });
 }
 
-function renderAll() {
-  const consultants = ["전체", ...new Set(allRows.map(r => r["Consultant"]||"").filter(Boolean))].sort();
-  const months = ["전체", ...new Set(allRows.map(r => r._month).filter(Boolean))].sort();
-  const weeks  = ["전체", ...new Set(allRows.map(r => r._week).filter(Boolean))].sort((a,b)=>parseInt(a.slice(2))-parseInt(b.slice(2)));
-
-  renderPills("pills-consultant", consultants, filterConsultant, v => filterConsultant=v);
-  renderPills("pills-month", months, filterMonth, v => filterMonth=v);
-  renderPills("pills-week", weeks, filterWeek, v => filterWeek=v);
-
-  filteredRows = getFiltered();
-  const countEl = document.getElementById("preview-count");
-  countEl.textContent = `${filteredRows.length}개 선택 / 전체 ${allRows.length}개`;
-  countEl.className = "preview-count " + (filteredRows.length>0?"ok":"zero");
-
-  const table = document.getElementById("preview-table");
-  table.querySelector("thead").innerHTML = "<tr>"+["날짜","BD/Manager","BU","Type","Job","Consultant","시간","주차"].map(c=>`<th>${c}</th>`).join("")+"</tr>";
-  table.querySelector("tbody").innerHTML = filteredRows.slice(0,8).map(row => {
-    const jc = row["_jobCol"]||"Job (페이지)";
-    return "<tr>"+[
-      row._dateStr||"-", row["BD/Manager"]||"-", row["BU"]||"-",
-      row["Type"]||"-", (row[jc]||"-").slice(0,30),
-      row["Consultant"]||"-", row._hours||"-", row._week||"-",
-    ].map(v=>`<td title="${v}">${v}</td>`).join("")+"</tr>";
-  }).join("");
-
-  document.getElementById("preview-more").textContent = filteredRows.length>8 ? `...외 ${filteredRows.length-8}개 행` : "";
-  document.getElementById("btn-generate").textContent = `엑셀 다운로드 (${filteredRows.length}개 행)`;
-  document.getElementById("btn-generate").disabled = filteredRows.length===0;
-}
-
-function setStep(n) {
-  [1,2,3].forEach(i => {
-    document.getElementById("step"+i).style.display = i===n?"block":"none";
-    const sc=document.getElementById("sc"+i), sl=document.getElementById("sl"+i);
-    if(i<n){sc.className="step-circle done";sc.textContent="✓";sl.className="step-label";}
-    else if(i===n){sc.className="step-circle active";sl.className="step-label active";}
-    else{sc.className="step-circle";sc.textContent=i;sl.className="step-label";}
-    if(i<3) document.getElementById("line"+i).className="step-line"+(i<n?" done":"");
-  });
-}
-
-function goStep1() { setStep(1); }
-function goStep2() { renderAll(); setStep(2); }
-
-function generateExcel() {
-  // Month에서 연/월 추출
-  const firstMonth = filteredRows[0]?._month || "";
-  const mMatch = firstMonth.match(/FY(\d{2})\s*M(\d{2})/);
-  let year = 2026, month = 6;
-  if (mMatch) { year = 2000 + parseInt(mMatch[1]); month = parseInt(mMatch[2]); }
-
-  const monthWeeks = getMonthWeeks(year, month);
-
-  // 선택한 주차 인덱스 (0=WK1 ... 4=WK5), 전체면 모든 주차
-  const selectedWkIdx = filterWeek !== "전체"
-    ? [parseInt(filterWeek.slice(2)) - 1]
-    : [0,1,2,3,4].filter(i => i < monthWeeks.length);
-
+function getGrouped(rows, selectedWkIdx) {
   // 날짜 범위 행을 개별 날짜로 확장
   const expandedRows = [];
-  filteredRows.forEach(row => {
+  rows.forEach(row => {
     const dayStr = (row["Day"] || "").trim();
     const rangeMatch = dayStr.match(/(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일\s*→\s*(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/);
     if (rangeMatch) {
@@ -366,37 +310,110 @@ function generateExcel() {
     }
   });
 
-  // 노션의 Week 값을 그대로 사용해서 주차 인덱스 매핑
-  // WK1→0, WK2→1, WK3→2, WK4→3, WK5→4
-  const outputRows = [];
+  // 같은 BD/Manager+BU+Type+Job+Consultant 조합은 한 줄로 합치기
+  const groupMap = new Map();
   expandedRows.forEach(row => {
-    const notionWeek = row._week || ""; // WK1~WK5
-    const wkIdx = parseInt(notionWeek.slice(2)) - 1; // 0-based
+    const notionWeek = row._week || "";
+    const wkIdx = parseInt(notionWeek.slice(2)) - 1;
     if (isNaN(wkIdx) || wkIdx < 0) return;
-
-    // 선택한 주차 필터
     if (!selectedWkIdx.includes(wkIdx)) return;
-
+    if (!row._date) return;
     const dayIdx = getDayIndex(row._date);
-    if (dayIdx < 0) return; // 주말 제외
+    if (dayIdx < 0) return;
 
     const jobColName = row["_jobCol"] || "Job (페이지)";
-    const wkDays = [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]];
-    const dist = distributeHours(row._hours, dayIdx);
-    for (let di=0; di<5; di++) wkDays[wkIdx][di] += dist[di];
+    const key = [row["BD/Manager"]||"", row["BU"]||"", row["Type"]||"", row[jobColName]||"", row["Consultant"]||""].join("||");
 
-    outputRows.push({
-      startDate: row._dateStr,
-      bdManager: row["BD/Manager"]||"",
-      bu: row["BU"]||"",
-      type: row["Type"]||"",
-      job: row[jobColName]||"",
-      consultant: row["Consultant"]||"",
-      wkDays,
-    });
+    if (!groupMap.has(key)) {
+      groupMap.set(key, {
+        startDate: row._dateStr,
+        bdManager: row["BD/Manager"]||"",
+        bu: row["BU"]||"",
+        type: row["Type"]||"",
+        job: row[jobColName]||"",
+        consultant: row["Consultant"]||"",
+        wkDays: [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]],
+      });
+    }
+    const g = groupMap.get(key);
+    if (row._dateStr && (!g.startDate || row._dateStr < g.startDate)) g.startDate = row._dateStr;
+    const dist = distributeHours(row._hours, dayIdx);
+    for (let di = 0; di < 5; di++) g.wkDays[wkIdx][di] += dist[di];
   });
 
-  const grouped = outputRows;
+  return [...groupMap.values()];
+}
+
+function getSelectedWkIdx() {
+  const firstMonth = filteredRows[0]?._month || "";
+  const mMatch = firstMonth.match(/FY(\d{2})\s*M(\d{2})/);
+  let year = 2026, month = 6;
+  if (mMatch) { year = 2000 + parseInt(mMatch[1]); month = parseInt(mMatch[2]); }
+  const monthWeeks = getMonthWeeks(year, month);
+  return filterWeek !== "전체"
+    ? [parseInt(filterWeek.slice(2)) - 1]
+    : [0,1,2,3,4].filter(i => i < monthWeeks.length);
+}
+
+function renderAll() {
+  const consultants = ["전체", ...new Set(allRows.map(r => r["Consultant"]||"").filter(Boolean))].sort();
+  const months = ["전체", ...new Set(allRows.map(r => r._month).filter(Boolean))].sort();
+  const weeks  = ["전체", ...new Set(allRows.map(r => r._week).filter(Boolean))].sort((a,b)=>parseInt(a.slice(2))-parseInt(b.slice(2)));
+
+  renderPills("pills-consultant", consultants, filterConsultant, v => filterConsultant=v);
+  renderPills("pills-month", months, filterMonth, v => filterMonth=v);
+  renderPills("pills-week", weeks, filterWeek, v => filterWeek=v);
+
+  filteredRows = getFiltered();
+  const selectedWkIdx = getSelectedWkIdx();
+  const grouped = getGrouped(filteredRows, selectedWkIdx);
+
+  const countEl = document.getElementById("preview-count");
+  countEl.textContent = `${grouped.length}개 선택 / 전체 ${allRows.length}개`;
+  countEl.className = "preview-count " + (grouped.length>0?"ok":"zero");
+
+  const DAYS = ["월","화","수","목","금"];
+  const table = document.getElementById("preview-table");
+  table.querySelector("thead").innerHTML = "<tr>"+["날짜","BD/Manager","BU","Type","Job","Consultant",...DAYS.map(d=>selectedWkIdx.map(w=>`WK${w+1}_${d}`)).flat()].map(c=>`<th>${c}</th>`).join("")+"</tr>";
+  table.querySelector("tbody").innerHTML = grouped.slice(0,8).map(g => {
+    const hours = selectedWkIdx.flatMap(wki => g.wkDays[wki]);
+    return "<tr>"+[
+      g.startDate||"-", g.bdManager||"-", g.bu||"-",
+      g.type||"-", g.job.slice(0,25)||"-", g.consultant||"-",
+      ...hours,
+    ].map(v=>`<td title="${v}">${v}</td>`).join("")+"</tr>";
+  }).join("");
+
+  document.getElementById("preview-more").textContent = grouped.length>8 ? `...외 ${grouped.length-8}개 행` : "";
+  document.getElementById("btn-generate").textContent = `엑셀 다운로드 (${grouped.length}개 행)`;
+  document.getElementById("btn-generate").disabled = grouped.length===0;
+}
+
+function setStep(n) {
+  [1,2,3].forEach(i => {
+    document.getElementById("step"+i).style.display = i===n?"block":"none";
+    const sc=document.getElementById("sc"+i), sl=document.getElementById("sl"+i);
+    if(i<n){sc.className="step-circle done";sc.textContent="✓";sl.className="step-label";}
+    else if(i===n){sc.className="step-circle active";sl.className="step-label active";}
+    else{sc.className="step-circle";sc.textContent=i;sl.className="step-label";}
+    if(i<3) document.getElementById("line"+i).className="step-line"+(i<n?" done":"");
+  });
+}
+
+function goStep1() { setStep(1); }
+function goStep2() { renderAll(); setStep(2); }
+
+function generateExcel() {
+  const firstMonth = filteredRows[0]?._month || "";
+  const mMatch = firstMonth.match(/FY(\d{2})\s*M(\d{2})/);
+  let year = 2026, month = 6;
+  if (mMatch) { year = 2000 + parseInt(mMatch[1]); month = parseInt(mMatch[2]); }
+  const monthWeeks = getMonthWeeks(year, month);
+  const selectedWkIdx = filterWeek !== "전체"
+    ? [parseInt(filterWeek.slice(2)) - 1]
+    : [0,1,2,3,4].filter(i => i < monthWeeks.length);
+
+  const grouped = getGrouped(filteredRows, selectedWkIdx);
 
   // 새 워크북 생성
   const wb = XLSX.utils.book_new();
