@@ -116,18 +116,42 @@
     </div>
     <div class="btn-row">
       <button class="btn btn-back" onclick="goStep1()">← 이전</button>
-      <button class="btn btn-go" id="btn-generate" onclick="generateExcel()">엑셀 다운로드</button>
+      <button class="btn btn-go" id="btn-generate" onclick="showResult()">데이터 추출</button>
     </div>
   </div>
 
   <div id="step3">
-    <div class="done-wrap">
-      <div class="done-emoji">🎉</div>
-      <div class="done-title">완료!</div>
-      <div class="done-sub"><span class="highlight" id="done-count"></span>이 엑셀로 저장되었습니다</div>
-      <div class="done-sub2">파일이 자동으로 다운로드됩니다</div>
-      <button class="btn" style="width:auto;padding:13px 32px" onclick="reset()">처음부터 다시 하기</button>
+    <!-- 표 1: 기본 정보 -->
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+        <span class="card-label" style="margin-bottom:0">① 기본 정보 <span id="result-count" style="color:#22c55e"></span></span>
+        <button class="btn" style="width:auto;padding:8px 18px;font-size:13px" onclick="copyTable('table1')">📋 복사</button>
+      </div>
+      <div id="copy-msg1" style="font-size:12px;color:#22c55e;margin-bottom:8px;min-height:16px"></div>
+      <div style="overflow-x:auto">
+        <table id="table1" style="width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap">
+          <thead id="table1-thead"></thead>
+          <tbody id="table1-tbody"></tbody>
+        </table>
+      </div>
     </div>
+
+    <!-- 표 2: 요일별 시간 -->
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+        <span class="card-label" style="margin-bottom:0">② 요일별 시간</span>
+        <button class="btn" style="width:auto;padding:8px 18px;font-size:13px" onclick="copyTable('table2')">📋 복사</button>
+      </div>
+      <div id="copy-msg2" style="font-size:12px;color:#22c55e;margin-bottom:8px;min-height:16px"></div>
+      <div style="overflow-x:auto">
+        <table id="table2" style="width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap">
+          <thead id="table2-thead"></thead>
+          <tbody id="table2-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <button class="btn" style="background:#1e293b;color:#94a3b8;margin-top:4px" onclick="reset()">← 처음부터 다시 하기</button>
   </div>
 </div>
 
@@ -385,7 +409,7 @@ function renderAll() {
   }).join("");
 
   document.getElementById("preview-more").textContent = grouped.length>8 ? `...외 ${grouped.length-8}개 행` : "";
-  document.getElementById("btn-generate").textContent = `엑셀 다운로드 (${grouped.length}개 행)`;
+  document.getElementById("btn-generate").textContent = `데이터 추출 (${grouped.length}개 행)`;
   document.getElementById("btn-generate").disabled = grouped.length===0;
 }
 
@@ -403,7 +427,7 @@ function setStep(n) {
 function goStep1() { setStep(1); }
 function goStep2() { renderAll(); setStep(2); }
 
-function generateExcel() {
+function showResult() {
   const firstMonth = filteredRows[0]?._month || "";
   const mMatch = firstMonth.match(/FY(\d{2})\s*M(\d{2})/);
   let year = 2026, month = 6;
@@ -415,55 +439,57 @@ function generateExcel() {
 
   const grouped = getGrouped(filteredRows, selectedWkIdx);
 
-  // 새 워크북 생성
-  const wb = XLSX.utils.book_new();
-  const ws = {};
+  const thStyle = "padding:7px 10px;background:#1e293b;color:#818cf8;text-align:left;border:1px solid #334155;white-space:nowrap";
+  const tdStyle = (isNum) => `padding:7px 10px;border:1px solid #1e293b;color:#f8fafc;background:#0d1117;${isNum?"text-align:center":""}`;
 
-  // 헤더행 (row 0, 0-based) - A열부터 (col 0)
+  // ── 표1: 기본 정보 (Start Date ~ Consultant) ──
   const BASE_HEADERS = ["Start Date","BD/Manager","BU","Type","Job","Consultant"];
+  document.getElementById("table1-thead").innerHTML =
+    "<tr>" + BASE_HEADERS.map(h => `<th style="${thStyle}">${h}</th>`).join("") + "</tr>";
+  document.getElementById("table1-tbody").innerHTML = grouped.map(g =>
+    "<tr>" + [g.startDate, g.bdManager, g.bu, g.type, g.job, g.consultant].map((v, ci) =>
+      `<td style="${tdStyle(false)}">${v||""}</td>`
+    ).join("") + "</tr>"
+  ).join("");
+
+  // ── 표2: 요일별 시간 ──
   const WK_HEADERS = selectedWkIdx.flatMap(wki => ["월","화","수","목","금"]);
-  const HEADERS = [...BASE_HEADERS, ...WK_HEADERS];
+  document.getElementById("table2-thead").innerHTML =
+    "<tr>" + WK_HEADERS.map(h => `<th style="${thStyle};text-align:center">${h}</th>`).join("") + "</tr>";
+  document.getElementById("table2-tbody").innerHTML = grouped.map(g =>
+    "<tr>" + selectedWkIdx.flatMap(wki => g.wkDays[wki]).map(v =>
+      `<td style="${tdStyle(true)}">${v||0}</td>`
+    ).join("") + "</tr>"
+  ).join("");
 
-  HEADERS.forEach((h, ci) => {
-    const addr = XLSX.utils.encode_cell({ r: 0, c: ci });
-    ws[addr] = { v: h, t: "s" };
-  });
-
-  // 데이터 행 (row 1부터)
-  grouped.forEach((g, i) => {
-    const r = i + 1;
-    const row = [];
-    row.push(g.startDate, g.bdManager, g.bu, g.type, g.job, g.consultant);
-    selectedWkIdx.forEach(wki => {
-      row.push(...g.wkDays[wki]); // 월화수목금
-    });
-    row.forEach((v, ci) => {
-      const addr = XLSX.utils.encode_cell({ r, c: ci });
-      const isNum = ci >= 6;
-      ws[addr] = isNum ? { v, t: "n" } : { v, t: "s" };
-    });
-  });
-
-  const totalCols = 6 + selectedWkIdx.length * 5;
-  ws["!ref"] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:grouped.length,c:totalCols-1} });
-
-  ws["!cols"] = [
-    {wch:12},  // Start Date
-    {wch:10},  // BD/Manager
-    {wch:6},   // BU
-    {wch:30},  // Type
-    {wch:40},  // Job
-    {wch:10},  // Consultant
-    ...Array(selectedWkIdx.length * 5).fill({wch:5}),
-  ];
-
-  const sheetName = `${month}월`;
-  XLSX.utils.book_append_sheet(wb, ws, sheetName);
-
-  const filename = `PS_Tracker_${year}년_${month}월_${filterWeek !== "전체" ? filterWeek+"_" : ""}${filterConsultant !== "전체" ? filterConsultant+"_" : ""}추출.xlsx`;
-  XLSX.writeFile(wb, filename);
-  document.getElementById("done-count").textContent = `${grouped.length}개 행`;
+  document.getElementById("result-count").textContent = `${grouped.length}개 행`;
   setStep(3);
+}
+
+function copyTable(tableId) {
+  const table = document.getElementById(tableId);
+  const msgId = tableId === "table1" ? "copy-msg1" : "copy-msg2";
+  const rows = [];
+  table.querySelectorAll("tbody tr").forEach(tr => {
+    const cols = [];
+    tr.querySelectorAll("td").forEach(td => cols.push(td.innerText));
+    rows.push(cols.join("\t"));
+  });
+  const tsv = rows.join("\n");
+  const msg = document.getElementById(msgId);
+  navigator.clipboard.writeText(tsv).then(() => {
+    msg.textContent = "✅ 복사 완료! 엑셀에 Ctrl+V 로 붙여넣기 하세요.";
+    setTimeout(() => msg.textContent = "", 3000);
+  }).catch(() => {
+    const ta = document.createElement("textarea");
+    ta.value = tsv;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    msg.textContent = "✅ 복사 완료! 엑셀에 Ctrl+V 로 붙여넣기 하세요.";
+    setTimeout(() => msg.textContent = "", 3000);
+  });
 }
 
 function reset() {
