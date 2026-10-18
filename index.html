@@ -170,6 +170,11 @@ function cleanUrl(val) {
   return val.replace(/\s*\(https?:\/\/[^)]*\)/g, "").trim();
 }
 
+function toLocalDateStr(d) {
+  if (!d) return "";
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
 function parseKoreanDate(str) {
   if (!str) return null;
   str = str.trim();
@@ -242,7 +247,7 @@ function parseCsvText(text, filename) {
     cleaned["_jobCol"] = jobCol;
     const dateObj = parseKoreanDate(row["Day"] || "");
     cleaned["_date"] = dateObj;
-    cleaned["_dateStr"] = dateObj ? dateObj.toISOString().slice(0,10) : "";
+    cleaned["_dateStr"] = toLocalDateStr(dateObj);
     cleaned["_month"] = cleanUrl(row["Month"] || "");
     cleaned["_week"] = (row["Week"] || "").trim();
     cleaned["_hours"] = parseFloat(row["시간"] || "0") || 0;
@@ -327,7 +332,7 @@ function getGrouped(rows, selectedWkIdx) {
       }
       const hoursPerDay = weekdays.length > 0 ? (row._hours / weekdays.length) : 0;
       weekdays.forEach(wd => {
-        expandedRows.push({ ...row, _date: wd, _dateStr: wd.toISOString().slice(0,10), _hours: hoursPerDay });
+        expandedRows.push({ ...row, _date: wd, _dateStr: toLocalDateStr(wd), _hours: hoursPerDay });
       });
     } else {
       expandedRows.push(row);
